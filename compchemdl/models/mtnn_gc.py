@@ -38,7 +38,7 @@ def get_multitask_outdir(tasks_nickname):
 
 def train_test_mtnn(train_task_csvs, test_tasks_csvs, tasks_nickname, smiles_field, y_field, id_field,
                     tempdir, num_epochs=40, batch_size=128, learning_rate=0.001, graph_conv_sizes=(128, 128),
-                    dense_size=256):
+                    dense_size=256, gpu=None):
     """
     Trains a multitask GCNN using the training sets in train_tasks_csvs and validates it using the test sets in
     test_tasks_csvs. Saves the trained model and the predictions under a folder named "train_test". Prints performance
@@ -57,6 +57,7 @@ def train_test_mtnn(train_task_csvs, test_tasks_csvs, tasks_nickname, smiles_fie
     :param learning_rate: learning rate
     :param graph_conv_sizes: tuple with output dimension for every GC layer
     :param dense_size: nb of neurons in the last dense layer
+    :param gpu: GPU to use for training (if None, only CPU will be used)
     :return: None
     """
 
@@ -93,10 +94,11 @@ def train_test_mtnn(train_task_csvs, test_tasks_csvs, tasks_nickname, smiles_fie
         scaled_val = transformer.transform(test_dset, outdir=transfo_dir_to_delete_2)
 
         # Train the model
-        scaled_train_y, yhattrain, scaled_train_w, scaled_test_y, yhattest, scaled_test_w = train_and_validate_mtnn(
-            scaled_train, n_tasks=len(tasks), outdir=outdir, graph_conv_sizes=graph_conv_sizes, dense_size=dense_size,
-            batch_size=batch_size, learning_rate=learning_rate, num_epochs=num_epochs,
-            pickle_file_name=tasks_nickname + '.pkl', test=scaled_val, transformer=transformer, test_unscaled=test_dset)
+        scaled_train_y, yhattrain, scaled_train_w, scaled_test_y, yhattest, scaled_test_w = \
+            train_and_validate_mtnn(scaled_train, n_tasks=len(tasks), outdir=outdir, graph_conv_sizes=graph_conv_sizes,
+                                    dense_size=dense_size, batch_size=batch_size, learning_rate=learning_rate,
+                                    num_epochs=num_epochs, pickle_file_name=tasks_nickname + '.pkl', test=scaled_val,
+                                    transformer=transformer, test_unscaled=test_dset, gpu=gpu)
 
         # compute metrics
         scaled_results_test = evaluate_multitask_gc(scaled_test_y, yhattest, scaled_test_w)
@@ -128,7 +130,7 @@ def train_test_mtnn(train_task_csvs, test_tasks_csvs, tasks_nickname, smiles_fie
 
 def cross_validate_mtnn(task_csvs, tasks_nickname, smiles_field, split_field, y_field, id_field,
                         tempdir, num_epochs, batch_size=128, learning_rate=0.001, graph_conv_sizes=(128, 128),
-                        dense_size=256):
+                        dense_size=256, gpu=None):
     """
     Cross-validates a multitask GCNN using the training sets in train_tasks_csvs. Saves the trained models and the
     predictions under folders named "fold_i". Prints performance metrics (R2 and Spearman rho) after every epoch.
@@ -146,6 +148,7 @@ def cross_validate_mtnn(task_csvs, tasks_nickname, smiles_field, split_field, y_
     :param learning_rate: learning rate
     :param graph_conv_sizes: tuple with output dimension for every GC layer
     :param dense_size: nb of neurons in the last dense layer
+    :param gpu: GPU to use for training (if None, only CPU will be used)
     :return: A pandas dataframe with performance metrics for every fold
     """
 
@@ -186,7 +189,7 @@ def cross_validate_mtnn(task_csvs, tasks_nickname, smiles_field, split_field, y_
                 train_and_validate_mtnn(scaled_train, len(tasks), outdir=outdir, graph_conv_sizes=graph_conv_sizes,
                                         dense_size=dense_size, batch_size=batch_size, learning_rate=learning_rate,
                                         num_epochs=num_epochs, pickle_file_name=tasks_nickname + '_fold_%i.pkl' % i,
-                                        test=scaled_val, test_unscaled=val, transformer=transformer, fold=i)
+                                        test=scaled_val, test_unscaled=val, transformer=transformer, fold=i, gpu=gpu)
 
             # compute metrics
             train_results = evaluate_multitask_gc(train_y, yhattrain, train_w)
@@ -232,7 +235,7 @@ def cross_validate_mtnn(task_csvs, tasks_nickname, smiles_field, split_field, y_
 
 def train_multitask_gc(train_task_csvs, tasks_nickname, smiles_field, y_field, id_field, tempdir,
                        num_epochs, batch_size=128, learning_rate=0.001, graph_conv_sizes=(128, 128),
-                       dense_size=256):
+                       dense_size=256, gpu=None):
     """
     We assemble all the data we have on all tasks for a final training run.
     :param train_task_csvs: csv files of the training sets
@@ -246,6 +249,7 @@ def train_multitask_gc(train_task_csvs, tasks_nickname, smiles_field, y_field, i
     :param learning_rate: learning rate
     :param graph_conv_sizes: tuple with output dimension for every GC layer
     :param dense_size: nb of neurons in the last dense layer
+    :param gpu: GPU to use for training (if None, only CPU will be used)
     :return: None
     """
     ensure_dir(tempdir)
@@ -269,15 +273,16 @@ def train_multitask_gc(train_task_csvs, tasks_nickname, smiles_field, y_field, i
         zscaling_dir_train = op.join(tempdir, 'zscaling')
         ensure_dir(zscaling_dir_train)
         transfo_dir_to_delete = tempfile.mkdtemp(prefix=zscaling_dir_train + '/')
-        transformer = NormalizationTransformer(transform_y=True, dataset=train)
-        scaled_train = transformer.transform(train, outdir=transfo_dir_to_delete)
+        transformer = NormalizationTransformer(transform_y=True, dataset=training_dset)
+        scaled_train = transformer.transform(training_dset, outdir=transfo_dir_to_delete)
 
         train_y, yhattrain, train_w = train_and_validate_mtnn(scaled_train, len(tasks), outdir,
                                                               graph_conv_sizes=graph_conv_sizes,
                                                               dense_size=dense_size, batch_size=batch_size,
                                                               learning_rate=learning_rate, num_epochs=num_epochs,
                                                               pickle_file_name=tasks_nickname + '.pkl', test=None,
-                                                              test_unscaled=None, transformer=transformer, fold=None)
+                                                              test_unscaled=None, transformer=transformer, fold=None,
+                                                              gpu=gpu)
         # compute metrics
         train_results = evaluate_multitask_gc(train_y, yhattrain, train_w)
         for k, vals in train_results.items():
@@ -286,7 +291,6 @@ def train_multitask_gc(train_task_csvs, tasks_nickname, smiles_field, y_field, i
 
         # Remove temporary directory for transformer
         shutil.rmtree(transfo_dir_to_delete)
-
 
     # Get rid of the whole temporary directory structure
     shutil.rmtree(tempdir)
@@ -329,10 +333,10 @@ def evaluate_multitask_gc(ytrue, yhat, w):
 # RUNNING JOB CONTROL
 #######################
 
-def dispatch_job(tasks_dir, model_nickname, tempdir_nickname, smiles_field='Canonical_Smiles',
-                 y_field='Value', id_field='Compound_No', num_epochs=40, batch_size=128, learning_rate=0.001,
-                 graph_conv_sizes=(128, 128), dense_size=256, split_field='Fold', cv=True, final=False,
-                 test_tasks_dir=None):
+def dispatch_job(tasks_dir, model_nickname, tempdir_nickname, smiles_field='canonical_smiles',
+                 y_field='label', id_field='mol_index', num_epochs=40, batch_size=128, learning_rate=0.001,
+                 graph_conv_sizes=(128, 128), dense_size=256, split_field='fold', cv=True, final=False,
+                 test_tasks_dir=None, gpu=None):
 
     if cv:
         print('Cross-validation run')
@@ -340,7 +344,7 @@ def dispatch_job(tasks_dir, model_nickname, tempdir_nickname, smiles_field='Cano
         return cross_validate_mtnn(files, model_nickname, split_field=split_field, smiles_field=smiles_field,
                                    y_field=y_field, id_field=id_field, tempdir=op.join(RESULTS_DIR, tempdir_nickname),
                                    num_epochs=num_epochs, batch_size=batch_size, learning_rate=learning_rate,
-                                   graph_conv_sizes=graph_conv_sizes, dense_size=dense_size)
+                                   graph_conv_sizes=graph_conv_sizes, dense_size=dense_size, gpu=gpu)
 
     else:
         if not final:
@@ -351,12 +355,11 @@ def dispatch_job(tasks_dir, model_nickname, tempdir_nickname, smiles_field='Cano
                                   if op.isfile(op.join(tasks_dir, f))])
             test_files = sorted([op.join(test_tasks_dir, f) for f in os.listdir(test_tasks_dir)
                                  if op.isfile(op.join(test_tasks_dir, f))])
-            print(test_files)
 
             return train_test_mtnn(train_files, test_files, model_nickname, smiles_field=smiles_field,
                                    y_field=y_field, id_field=id_field, tempdir=op.join(RESULTS_DIR, tempdir_nickname),
                                    num_epochs=num_epochs, batch_size=batch_size, learning_rate=learning_rate,
-                                   graph_conv_sizes=graph_conv_sizes, dense_size=dense_size)
+                                   graph_conv_sizes=graph_conv_sizes, dense_size=dense_size, gpu=gpu)
         else:
             # final training
             train_files = sorted([op.join(tasks_dir, f) for f in os.listdir(tasks_dir)
@@ -366,7 +369,7 @@ def dispatch_job(tasks_dir, model_nickname, tempdir_nickname, smiles_field='Cano
                                       y_field=y_field, id_field=id_field,
                                       tempdir=op.join(RESULTS_DIR, tempdir_nickname), num_epochs=num_epochs,
                                       batch_size=batch_size, learning_rate=learning_rate,
-                                      graph_conv_sizes=graph_conv_sizes, dense_size=dense_size)
+                                      graph_conv_sizes=graph_conv_sizes, dense_size=dense_size, gpu=gpu)
 
 
 if __name__ == '__main__':
@@ -386,15 +389,17 @@ if __name__ == '__main__':
     parser.add_argument('-e', '--epochs', help='number of epochs', default=40, type=int)
     parser.add_argument('-l', '--learningrate', help='learning rate', default=0.001, type=float)
     parser.add_argument('-s', '--smiles_field', help='name of the column containing the molecules SMILES',
-                        default='Canonical_Smiles', type=str)
+                        default='canonical_smiles', type=str)
     parser.add_argument('-y', '--y_field', help='name of the column containing the target value to predict',
-                        default='Value', type=str)
+                        default='label', type=str)
     parser.add_argument('-i', '--id_field', help='name of the column containing the identifier for the compounds',
-                        default='Compound_No', type=str)
+                        default='mol_index', type=str)
     parser.add_argument('-f', '--split_field', help='name of the column containing the fold assignment for CV',
-                        default='Fold', type=str)
+                        default='fold', type=str)
+    parser.add_argument('-g', '--gpu', help='id of the GPU to use for training. Default is None, only CPU usage.',
+                        default=None, type=int)
     args = parser.parse_args()
     dispatch_job(tasks_dir=args.tasks, model_nickname=args.name, tempdir_nickname=args.output, cv=args.cv,
                  final=args.refit, batch_size=args.batch, num_epochs=args.epochs, learning_rate=args.learningrate,
                  smiles_field=args.smiles_field,  y_field=args.y_field, split_field=args.split_field,
-                 test_tasks_dir=args.test_tasks)
+                 test_tasks_dir=args.test_tasks, gpu=args.gpu)

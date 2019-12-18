@@ -17,8 +17,6 @@ def easy_predict(dataset, model, n_tasks, tempdir, smiles_field='Canonical_Smile
     molids_processed = dset.ids
 
     predictions = model.predict(dset)
-    print(predictions.shape)
-    print(predictions[:20, :])
 
     return predictions, molids_processed
 
@@ -82,7 +80,6 @@ def run_the_inference(input_file, model_dir, output_file=None, tempdir=None, gpu
 
     # 4. Post-process the predictions (remove the z-scaling)
     ypred = post_process_predictions(ypred, model_dir)
-    print(ypred)
 
     # 5. Write down the csv file with the predictions
     if output_file is not None:

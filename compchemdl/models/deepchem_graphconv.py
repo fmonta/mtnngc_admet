@@ -1,30 +1,18 @@
-import os
-os.environ['CUDA_VISIBLE_DEVICES'] = '0'
-
 import os.path as op
-import tempfile
 import numpy as np
-import pandas as pd
 import pickle
 from scipy.stats import spearmanr
 import tensorflow as tf
 
 from deepchem.models import GraphConvModel
-from deepchem.feat import ConvMolFeaturizer
-from deepchem.data import CSVLoader
 from deepchem.metrics import Metric, r2_score
 
 from compchemdl.utils import ensure_dir
 
 
-####################################################
-# Defines how much GPU memory is allowed to be used
-####################################################
-
-
-config = tf.ConfigProto(
-    gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=0.75),
-    device_count = {'GPU': 1}
+default_config = tf.ConfigProto(
+    gpu_options=tf.GPUOptions(per_process_gpu_memory_fraction=0.75),
+    device_count={'GPU': 1}
 )
 
 ###################
@@ -32,7 +20,7 @@ config = tf.ConfigProto(
 ###################
 
 def define_gc_regression_model(n_tasks, graph_conv_sizes=(128, 128), dense_size=256, batch_size=128,
-                               learning_rate=0.001, config=config, model_dir='/tmp'):
+                               learning_rate=0.001, config=default_config, model_dir='/tmp'):
     """
     Initializes the multitask regression GCNN
     :param n_tasks: number of output tasks
@@ -57,7 +45,7 @@ def define_gc_regression_model(n_tasks, graph_conv_sizes=(128, 128), dense_size=
 
 
 def train_and_validate_mtnn(train, n_tasks, outdir, graph_conv_sizes, dense_size, batch_size, learning_rate, num_epochs,
-                            pickle_file_name, test=None, test_unscaled=None, transformer=None, fold=None):
+                            pickle_file_name, test=None, test_unscaled=None, transformer=None, fold=None, gpu=None):
     """
     :param train: DeepChen dataset object, y appropriately scaled already
     :param n_tasks: number of tasks in the data
@@ -73,15 +61,29 @@ def train_and_validate_mtnn(train, n_tasks, outdir, graph_conv_sizes, dense_size
     :param test_unscaled: optional. Can be a DeepChem dataset object with y as in the original dataset.
     :param transformer: optional. transformer object used to transform train and test (normally, z-scaler for the y).
     :param fold: fold number in case we are doing CV. Will be used as a suffix for pickle files
+    :param gpu: which GPU to use. If None, training will happen on CPU (very slow!)
     :return: y_true, y_pred, and weights for the training (and also for test if provided)
     """
+
+    # 0. GPU management
+    if gpu is None:
+        import os
+        os.environ['CUDA_VISIBLE_DEVICES'] = ''
+        config = tf.ConfigProto(device_count={'GPU': 0, 'CPU': 1})
+    else:
+        import os
+        os.environ['CUDA_VISIBLE_DEVICES'] = '%i' % gpu
+        config = tf.ConfigProto(
+            gpu_options=tf.GPUOptions(per_process_gpu_memory_fraction=0.75),
+            device_count={'GPU': 1}
+        )
 
     # 1. Define the model
     model_dir = op.join(outdir, 'model')
     ensure_dir(model_dir)
     model = define_gc_regression_model(n_tasks, graph_conv_sizes=graph_conv_sizes,
                                        dense_size=dense_size, batch_size=batch_size,
-                                       learning_rate=learning_rate, model_dir=model_dir)
+                                       learning_rate=learning_rate, model_dir=model_dir, config=config)
 
     # 2. Define the metrics
     r2 = Metric(r2_score, np.mean)
@@ -118,14 +120,10 @@ def train_and_validate_mtnn(train, n_tasks, outdir, graph_conv_sizes, dense_size
     # save the transformer for inference time...
     if fold is not None:
         transformer_file = op.join(outdir, 'transformer_fold_%i.pkl' % fold)
-        zscale_file = op.join(outdir, 'transformer_fold_%i_easyread.pkl' % fold)
     else:
         transformer_file = op.join(outdir, 'transformer.pkl')
-        zscale_file = op.join(outdir, 'transformer_easyread.pkl')
     with open(transformer_file, 'wb') as writer:
         pickle.dump(transformer, writer, protocol=pickle.HIGHEST_PROTOCOL)
-    with open(zscale_file, 'wb') as writer:
-        pickle.dump([transformer.y_means, transformer.y_stds], writer, protocol=pickle.HIGHEST_PROTOCOL)
 
     # save the molids...
     if fold is not None:
@@ -133,7 +131,10 @@ def train_and_validate_mtnn(train, n_tasks, outdir, graph_conv_sizes, dense_size
     else:
         molids_file = op.join(outdir, 'molids.pkl')
     with open(molids_file, 'wb') as writer:
-        pickle.dump([train.ids, test.ids], writer, protocol=pickle.HIGHEST_PROTOCOL)
+        if test is not None:
+            pickle.dump([train.ids, test.ids], writer, protocol=pickle.HIGHEST_PROTOCOL)
+        else:
+            pickle.dump(train.ids, writer, protocol=pickle.HIGHEST_PROTOCOL)
 
     # Signal that this training is over by creating an empty DONE.txt file
     open(op.join(outdir, 'DONE.txt'), 'a').close()

@@ -1,0 +1,30 @@
+name: mtnngc
+
+channels:
+  - omnia
+  - rdkit
+  - conda-forge
+  - defaults
+
+dependencies:
+  - anaconda::python=3.5
+  - anaconda::pip=10.0.1
+  - anaconda::six=1.11.0
+
+  - rdkit::rdkit=2018.03.3.0  # 2017.09.3.0
+
+  - anaconda::pandas=0.22
+  - anaconda::joblib=0.12.1  # 0.11
+  - anaconda::scikit-learn
+  - anaconda::networkx=2.1
+
+  - anaconda::cudatoolkit=9.0
+  - anaconda::cudnn=7
+
+  - omnia::pdbfixer=1.4
+  - omnia::mdtraj
+  - conda-forge::simdna
+
+  - pip:
+    - tensorflow-gpu==1.6.0
+    - "git+https://github.com/deepchem/deepchem.git@2.1.0#egg=deepchem"

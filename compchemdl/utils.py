@@ -16,22 +16,6 @@ def ensure_dir(dirpath):
         os.makedirs(dirpath)
 
 
-def merge_two_dicts(x, y):
-    z = x.copy()
-    z.update(y)
-    return z
-
-
-def merge_dicts(l):
-    """
-    Convenience function to merge list of dictionaries.
-    """
-    merged = {}
-    for dictio in l:
-        merged = merge_two_dicts(merged, dictio)
-    return merged
-
-
 def str2bool(v):
     if v.lower() in ('yes', 'true', 't', 'y', '1'):
         return True

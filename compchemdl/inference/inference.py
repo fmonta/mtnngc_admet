@@ -12,11 +12,11 @@ from deepchem.data import CSVLoader
 import tensorflow as tf
 import tempfile
 import functools
-from compchemdl.inference import DATA_DIR
+from compchemdl.data import DATA_DIR
 from compchemdl.utils import ensure_dir, ensure_dir_from_file, merge_dicts
 
 
-# Memory and CPU usage restrictions for tensorflow
+# Memory and CPU usage restrictions for tensorflow. We only use CPU for inference.
 config_cpu = tf.ConfigProto(
     device_count={'GPU': 0, 'CPU': 1},
     allow_soft_placement=True,
@@ -24,84 +24,9 @@ config_cpu = tf.ConfigProto(
     intra_op_parallelism_threads=4
 )
 
-
-TASKS = ['LOD2', 'LOA2', 'LOS2', 'LMP2']
-MODEL = op.join(DATA_DIR, 'PCtasksCS', 'final_model_2018-10-05',
+MODEL = op.join(DATA_DIR, 'final_model_2018-07-10',
                 'bs=128_lr=0.00100_infeat=75_outfeat=128_dense=256_epo=40_rs=123', 'model.ckpt')
 
-####################
-# HELPER FUNCTIONS
-####################
-
-
-def transform_y_task(y, task_index, transformer):
-    """
-    :param y: task array to transform
-    :param task_index: index of task on which to apply the transformer
-    :param transformer: z-scaler from DeepChem
-    :return: z-scaled array for the task of interest
-    """
-    y_std = transformer.y_stds[task_index]
-    y_mean = transformer.y_means[task_index]
-    return np.nan_to_num((y - y_mean) / y_std)
-
-
-def untransform_y_task(y, task_index, transformer):
-    """
-    :param y: task values (or predictions) to transform back
-    :param task_index: index of the task of interest
-    :param transformer: NormalizationTransformer object that was used to transform the data
-    :return: back transformed y
-    """
-    y_std = transformer.y_stds[task_index]
-    y_mean = transformer.y_means[task_index]
-
-    return y * y_std + y_mean
-
-
-######################
-# DATA PREPARATION
-######################
-
-
-def load_data(dataset_files, tempdir, smiles_field='Smiles', y_field='Value', id_field='Compound_No'):
-    """
-    :param dataset_files: list of paths to the csv files containing the data for each task of interest
-    :param smiles_field: column name in the csv giving the SMILES of the compounds
-    :param y_field: column name in the csv giving the experimental value to learn. At inference time, this information
-    is ignored but has to be provided.
-    :param id_field: column name in the csv giving the identifier for the molecules
-    :param tempdir: directory where ConvMol datasets will be temporarily stored
-    :return: list of tasks and the list of ConvMol datasets
-    """
-    ensure_dir(tempdir)
-    data_dfs = [pd.read_csv(dataset_file, sep=',') for dataset_file in dataset_files]
-    n_tasks = len(dataset_files)
-    # Rename the y_field column
-    data_dfs = [data_df.rename(index=str, columns={'Value': y_field + '_%i' % i}) for i, data_df in enumerate(data_dfs)]
-    # Merge the individual tasks based on Smiles
-    df_data = functools.reduce(lambda x, y: pd.merge(x, y, on=[id_field, smiles_field], how='outer'), data_dfs)
-
-    # hacky thing to avoid problems with files where only 1 structure is present (problem in DeepChem)
-    df_to_add = pd.DataFrame.from_dict({id_field: ['fake'], smiles_field: ['C']})
-    df_data = df_data.append(df_to_add)
-
-    # Save the data csv in a temporary place
-    dataset_file = op.join(tempdir, 'data.csv')
-    df_data.to_csv(dataset_file, na_rep=np.nan, index=False)
-
-    # Featurize the dataset for Graph Convolutional architecture
-    featurizer = ConvMolFeaturizer()
-    loader = CSVLoader(tasks=['Value_%i' % i for i in range(n_tasks)], smiles_field=smiles_field, featurizer=featurizer,
-                       id_field=id_field)
-    dataset = loader.featurize(dataset_file, shard_size=8192, data_dir=tempdir)
-
-    return ['Value_%i' % i for i in range(n_tasks)], dataset
-
-
-#######################
-# PREDICTION
-#######################
 
 def predict_operation(X, adjacency_ph, atom_feats_ph, degree_slice_ph, membership_ph, predict_ops, session):
 
@@ -123,12 +48,11 @@ def predict_operation(X, adjacency_ph, atom_feats_ph, degree_slice_ph, membershi
     return results
 
 
-def predict(dataset, checkpoint, task_indices, tempdir, smiles_field='Canonical_Smiles', y_field='Value',
-            id_field='Compound_No', batch_size=128):
+def predict(dataset, checkpoint, tempdir, smiles_field='Canonical_Smiles', y_field='Value', id_field='Compound_No',
+            batch_size=128):
     """
 
     :param dataset: path to the data to predict (in csv format with smiles, y (or fake y), molid)
-    :param task_indices: list of indices of tasks for which we want a predictions
     :param checkpoint: path to the checkpoint of the trained model
     :param tempdir: where the DiskDataset object will be created for the dataset to predict. Folder will be removed
     afterwards.
@@ -139,9 +63,8 @@ def predict(dataset, checkpoint, task_indices, tempdir, smiles_field='Canonical_
     :return:
     """
     device = "/cpu:0"
-    # 0. Avoid stupid failure
     ensure_dir(tempdir)
-    # 1. Get the data into some kind of DeepChem dataset (DiskDataset)
+    # 1. Get the data into the DeepChem DiskDataset object format
     _, dset = load_data([dataset], tempdir, smiles_field, y_field, id_field)
     molids_processed = dset.ids
 
@@ -154,13 +77,12 @@ def predict(dataset, checkpoint, task_indices, tempdir, smiles_field='Canonical_
             saver1.restore(sess, tf.train.latest_checkpoint(model_dir))
             graph = tf.get_default_graph()
 
-            # operation we will want to run:
+            # operations we will want to run (one per output task):
             predict_ops = []
-            for ti in task_indices:
-                if ti == 0:
-                    predict_ops.append(graph.get_tensor_by_name('Squeeze:0'))
-                else:
-                    predict_ops.append(graph.get_tensor_by_name('Squeeze_%i:0' % ti))
+            all_squeeze_tensors = [n.name for n in graph.as_graph_def().node if n.name.startswith('Squeeze')]
+            task_tensors = all_squeeze_tensors[:int(len(all_squeeze_tensors)/3)]
+            for tt in task_tensors:
+                predict_ops.append(graph.get_tensor_by_name(tt + ':0'))
 
             # Pick the necessary input placeholders from the graph
             tf_atom_feats = graph.get_tensor_by_name('topology_atom_features:0')
@@ -186,7 +108,6 @@ def predict(dataset, checkpoint, task_indices, tempdir, smiles_field='Canonical_
             if n_samples > batch_size:
 
                 n_batches = int(math.ceil(float(n_samples) / batch_size))
-                print(n_batches)
                 preds = []
                 for i in range(n_batches - 1):
                     X = ConvMol.agglomerate_mols(X_b[i*batch_size:i*batch_size+batch_size])
@@ -195,7 +116,6 @@ def predict(dataset, checkpoint, task_indices, tempdir, smiles_field='Canonical_
                     preds.append(results)
 
                 # last batch
-                print('Last batch!')
                 X = ConvMol.agglomerate_mols(X_b[(n_batches-1)*batch_size:])
                 results = predict_operation(X, adjacency_placeholders, tf_atom_feats, tf_top_slice, tf_top_memb,
                                             predict_ops, sess)
@@ -204,7 +124,6 @@ def predict(dataset, checkpoint, task_indices, tempdir, smiles_field='Canonical_
                 # Put together all the preds for all the batches (currently list of np arrays)
                 preds = np.vstack(preds)
                 preds = preds[:n_samples, :]
-                print(preds.shape)
 
             else:  # no need to care about batching
                 X = ConvMol.agglomerate_mols(X_b)
@@ -215,12 +134,11 @@ def predict(dataset, checkpoint, task_indices, tempdir, smiles_field='Canonical_
     return preds, molids_processed
 
 
-def post_process_predictions(preds, checkpoint, task_indices):
+def post_process_predictions(preds, checkpoint):
     """
     Undo the transformation (z-scaling) of the predictions
     :param preds: numpy array (n_test_cpds, n_tasks) of predictions obtained from calling the predict() method
     :param checkpoint: path to the model snapshot that was used for predictions
-    :param task_indices: which of all tasks that MTNN model can predict we are interested in
     :return: un-transformed predictions
     """
     # 1. Find the transformer
@@ -230,9 +148,9 @@ def post_process_predictions(preds, checkpoint, task_indices):
 
     # 2. Apply the untransformation
     untransformed_y = []
-    for i, ti in enumerate(task_indices):
+    for i in range(preds.shape[1]):
         yhat = preds[:, i]
-        yhat_new = untransform_y_task(yhat, ti, transformer)
+        yhat_new = untransform_y_task(yhat, i, transformer)
         untransformed_y.append(yhat_new)
 
     return np.array(untransformed_y).T
@@ -242,10 +160,9 @@ def post_process_predictions(preds, checkpoint, task_indices):
 # INFERENCE JOB
 #################
 
-def run_the_thing(input_file, tasks, output_file=None, tempdir=None):
+def run_the_thing(input_file, output_file=None, tempdir=None):
     """
     :param input_file: file in .smi format (smiles, tab separation, molecule_id)
-    :param tasks: lists of tasks among the possible tasks for which we want a prediction
     :param output_file: where to store the predictions (csv format). If None, no output file is written
     :param tempdir: where the temporary directories created by DeepChem will be stored
     :return: predictions (back transformed)
@@ -272,13 +189,7 @@ def run_the_thing(input_file, tasks, output_file=None, tempdir=None):
     temporary_file = op.join(tempfile.mkdtemp(dir=tempdir), 'input.csv')
     input_data.to_csv(temporary_file)
 
-    # 3. Sanity check of the requested tasks + convert tasks to ids
-    if tasks is None:
-        tasks = TASKS  # if no requested tasks, all will be computed
-    assert (t in TASKS for t in tasks), 'Task requested is not modeled yet.'
-    task_indices = [TASKS.index(t) for t in tasks]
-
-    # 4. Write checkpoint file to have the proper path
+    # 3. Rewrite checkpoint file to have the proper path
     print('writing the checkpoint file paths')
     model_path = op.split(MODEL)[0]
     with open(op.join(model_path, 'checkpoint'), 'w') as writer:
@@ -290,27 +201,28 @@ def run_the_thing(input_file, tasks, output_file=None, tempdir=None):
         writer.write(MODEL)
         writer.write('"')
 
-    # 5. Run the prediction
+    # 4. Run the prediction
     print('Running the prediction')
     second_tempdir = op.join(tempfile.mkdtemp(dir=tempdir), 'todel')
-    ypred, molids_processed = predict(temporary_file, MODEL, task_indices, second_tempdir, smiles_field='smiles',
-                                      y_field='Value', id_field='molid')
-    # hacky thing to avoid problems with files where only 1 structure is present. Remove the last, fake molecule from
-    # the output
+    ypred, molids_processed = predict(temporary_file, MODEL, second_tempdir, smiles_field='smiles', y_field='Value',
+                                      id_field='molid')
+    # To avoid problems with files where only 1 structure is present, we added a dummy molecule to the inputs. Now we
+    # need to remove it from the output
     ypred = ypred[:-1, :]
+    n_tasks = ypred.shape[1]
     molids_processed = molids_processed[:-1]
     molids_processed = [str(mid) for mid in molids_processed]
 
-    # 6. Post-process the predictions (remove the z-scaling)
-    ypred = post_process_predictions(ypred, MODEL, task_indices)
+    # 5. Post-process the predictions (remove the z-scaling)
+    ypred = post_process_predictions(ypred, MODEL)
 
-    # 7. Write down the csv file with the predictions
+    # 6. Write down the csv file with the predictions
     if output_file is not None:
         ensure_dir_from_file(output_file)
         print('Writing the predictions on file')
         with open(output_file, 'w') as writer:
             # header
-            writer.write(','.join(['CompoundID', 'Canonical Smiles'] + tasks))
+            writer.write(','.join(['CompoundID', 'Canonical Smiles'] + ['task_%i' % i for i in range(n_tasks)]))
             writer.write('\n')
             # content
             if len(molids) == ypred.shape[0]:  # all compounds could be processed
@@ -328,7 +240,7 @@ def run_the_thing(input_file, tasks, output_file=None, tempdir=None):
                     writer.write(','.join([str(p) for p in preds]))
                     writer.write('\n')
 
-    # 8. Delete temp files
+    # 7. Delete temp files
     print('Deleting temporary files...')
     shutil.rmtree(op.dirname(temporary_file))
     shutil.rmtree(op.dirname(second_tempdir))
@@ -344,11 +256,10 @@ if __name__ == '__main__':
                                                         'a .smi format: one line per compound, starting with the '
                                                         'smiles then a tab separation then a molecule id. No other '
                                                         'format is currently accepted.', required=True)
-    parser.add_argument('-t', '--tasks', help='list of tasks we want to predict', action='append')
     parser.add_argument('-o', '--output', help='where to save predictions')
     parser.add_argument('-j', '--jobdir', help='temporary directory for intermediate files')
     args = parser.parse_args()
     if args.output:
-        run_the_thing(tasks=args.tasks, input_file=args.input, output_file=args.output, tempdir=args.jobdir)
+        run_the_thing(input_file=args.input, output_file=args.output, tempdir=args.jobdir)
     else:
-        print(run_the_thing(tasks=args.tasks, input_file=args.input))
+        print(run_the_thing(input_file=args.input))

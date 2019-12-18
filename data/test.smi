@@ -1,0 +1,5 @@
+CCN(CC)CC1=C(O)C=CC(NC2=C3C=CC(Cl)=CC3=NC=C2)=C1	amodiaquine
+CC(=O)NC1=CC=C(O)C=C1	paracetamol
+[H][C@@]12C[C@]1([H])[C@@]1([H])[C@]3([H])[C@]4([H])C[C@]4([H])[C@@]4(CCC(=O)O4)[C@@]3(C)CC[C@]1([H])[C@@]1(C)CCC(=O)C=C21	drospirenone
+[H][C@@]12CC[C@](O)(C(=O)CO)[C@@]1(C)C[C@H](O)[C@@]1([H])[C@@]2([H])CCC2=CC(=O)CC[C@]12C	hydrocortisone
+CN(CC1=CN=C2N=C(N)N=C(N)C2=N1)C1=CC=C(C=C1)C(=O)N[C@@H](CCC(O)=O)C(O)=O	methotrexate

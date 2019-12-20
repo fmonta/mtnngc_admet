@@ -30,7 +30,34 @@ MTNNGC models can be trained using the python script in **compchemdl/models/mtnn
 
 - --output (-o): *Optional*. How the temporary directory storing intermediate results should be called
 
-- 
+- --cv (-x): Whether to run a cross-validation on the training sets or not. *Default: True* NB: setting this to true requires that the input files contain a column with cross-validation fold assignments
+
+- --refit (-r): Whether to run a final training on the whole training sets. *Default: False*
+
+- --batch (-b): size of the minibatches. *Default: 128*
+
+- --epochs (-e): number of training epochs. *Default: 40*
+
+- --learningrate (-l): learning rate. *Default: 0.001*
+
+- --gpu (-g): *Optional* GPU to use. If nothing is passed, the CPU will be used instead.
+
+- --smiles_field (-s): header of the column containing the clean SMILES of the input molecules. *Default: 'canonical_smiles'*
+
+- --y_field (-y): header of the column containing the target value for every task. *Default: 'label'*
+
+- --id_field (-i): header of the column containing the identifiers of the input molecules. *Default: 'mol_index'*
+
+- --split_field (-f): header of the column containing the fold assignments for cross-validation. Only needed if --cv is set to True. *Default: 'fold'*
+
+We provide in this repository a folder with three example datasets that can be used to test. The datasets do not correspond to the ones discussed in the paper but rather open data coming from ChEMBL. 
+To try and run a cross-validation task, the following python command can be used (if your GPU 0 is available):
+
+```python -u compchemdl/models/mtnn_gc.py -t /your_path_to_the_repo/data/training_data -n test_model -o mytemp -x True -r False -g 0```
+
+To train the same model on the whole data and save it for future use, the following python command can be used:
+
+```python -u compchemdl/models/mtnn_gc.py -t /your_path_to_the_repo/data/training_data -n test_model -o mytemp -x False -r True -g 0```
 
 
 ## Dataset preparation

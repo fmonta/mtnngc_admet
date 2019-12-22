@@ -62,4 +62,28 @@ To train the same model on the whole data and save it for future use, the follow
 
 ## Dataset preparation
 
+### Training and validation 
+The datasets for training and testing should be comma-separated files with different fields: a field for the identifier of the molecule (*id_field*, set by default to 'mol_index'), a field for the structures in SMILES format (*smiles_field*, set by default to 'canonical_smiles'), a field for the target value of the particular task (*y_field*, set by default to 'label'). In case cross-validation is required, then an additional field to assign every example to a CV fold is needed (*split_field*, set by default to 'fold'). Example files can be found under the data/training_data folder.
+One file per task is required, and will be aggregated based on the SMILES column, hence it is necessary to preprocess the compounds the same way for all tasks. 
+
+When train-test is required, a second directory containing test files should be given. The format is exactly the same as for the training and cross-validation. It is important to give the same names to the files in both directories so that they are matched properly (ex: Task1_train.csv, Task2_train.csv in training_data/ and Task1_test.csv, Task2_test.csv in the test directory). 
+
+### Inference
+
+For inference, we require an .smi format as input: tab separated file with one row per compound, starting with the SMILES in the first column and a molecule identifier in the second column. No headers.
+An example file can be found under data/test.smi.
+
+
 ## Inference
+
+Once a model has been trained and validated, it can also be used for predicting new compounds. For this, we provide the script in **compchemdl/inference/inference.py**. The options are the following:
+
+- --input (-i): path to the input file in .smi format (see Dataset preparation for more details)
+- --checkpoint (-c): path to the directory where the final trained model is stored
+- --output (-o): *Optional* path to the csv file where the predictions can be stored. If no path is given, the predictions will be printed out instead.
+- --jobdir (-j): temporary directory where intermediate files are to be stored. Will be deleted at the end of the job
+- --gpu (-g): *Optional* GPU to use. If nothing is passed, the CPU will be used instead.
+
+Assuming the model named "model_1" has been previously trained and saved on date XX-XX-XX, using it for prediction on our test file would be done the following way:
+
+```python -u compchemdl/inference/inference.py -i /*your_path_to_the_repo*/data/test.smi -c /*your_path_to_the_repo*/data/models/model_1/final_model_XX-XX-XX -j /tmp```
